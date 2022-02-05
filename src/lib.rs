@@ -42,14 +42,26 @@
 //! and benefits.
 //!
 //! - Encoding
-//!   - From one slice to another; efficient, but requires 2x the available RAM.
-//!   - Incrementally, using an iterator; somewhat slower, but requires no
-//!     additional memory. (This can be useful in a serial interrupt handler.)
+//!   - `encode_buf`: from one slice to another; efficient, but requires 2x the
+//!      available RAM.
+//!   - `encode_iter`: incremental, using an iterator; somewhat slower, but
+//!     requires no additional memory. (This can be useful in a serial interrupt
+//!     handler.)
 //! - Decoding
-//!   - From one slice to another; efficient, but requires 2x the available RAM.
-//!   - In-place in a slice; roughly as efficient, but overwrites incoming data.
+//!   - `decode_buf`: from one slice to another; efficient, but requires 2x the
+//!     available RAM.
+//!   - `decode_in_place`: in-place in a slice; nearly as efficient, but
+//!     overwrites incoming data.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+
+// So far, the implementation is performant without the use of `unsafe`. To
+// ensure that I think before breaking this property down the road, I'm
+// currently configuring the compiler to reject `unsafe`. This is not a promise
+// or a religious decision and might get changed in the future; merely scanning
+// for the presence of `unsafe` is neither necessary nor sufficient for auditing
+// crates you depend on, including this one.
+#![forbid(unsafe_code)]
 
 /// The termination byte used by `corncobs`. Yes, it's a bit silly to have this
 /// as a constant -- but the implementation is careful to use this named
@@ -251,6 +263,17 @@ pub enum CobsError {
     Truncated,
 }
 
+impl core::fmt::Display for CobsError {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        match self {
+            Self::Truncated => f.write_str("input truncated"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for CobsError {}
+
 /// Decodes a length-or-terminator byte. If the byte is `ZERO`, returns `None`.
 /// Otherwise returns the length of the run encoded by the byte.
 fn decode_len(code: u8) -> Option<usize> {
@@ -263,6 +286,11 @@ fn decode_len(code: u8) -> Option<usize> {
 ///
 /// The decoded message is deposited into `bytes` starting at index 0, and
 /// `decode_in_place` returns the number of decoded bytes.
+///
+/// If you've got memory to spare, `decode_buf` is often somewhat faster --
+/// `decode_in_place` takes between 1x and 3x the time in benchmarks. You may
+/// also prefer to use `decode_buf` if you can't overwrite the incoming data,
+/// for whatever reason.
 pub fn decode_in_place(bytes: &mut [u8]) -> Result<usize, CobsError> {
     let mut inpos = 0;
     let mut outpos = 0;
