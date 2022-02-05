@@ -1,0 +1,21 @@
+[package]
+name = "corncobs"
+version = "0.1.0"
+authors = ["Cliff L. Biffle <code@cliffle.com>"]
+edition = "2021"
+
+[dependencies]
+
+[features]
+default = []
+std = []
+
+[dev-dependencies]
+criterion = "0.3.5"
+
+[[bench]]
+name = "benchy"
+harness = false
+
+[profile.release]
+debug = 2
