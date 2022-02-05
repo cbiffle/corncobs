@@ -16,9 +16,9 @@
 //! worst-case overhead up to 100%, which means to meet your application's
 //! requirements, you may need to reserve up to 50% of bandwidth at all times.
 //!
-//! Delightfully, the overhead _decreases_ if the data you're sending contains
-//! the termination byte. This is the opposite of SLIP, and can cause the
-//! average-case overhead to be very nearly zero.
+//! Delightfully, the overhead of COBS _decreases_ if the data you're sending
+//! contains the termination byte. This is the opposite of SLIP, and can cause
+//! the average-case overhead to be very nearly zero.
 //!
 //! COBS is an example of a _resynchronizable_ framing protocol. An observer can
 //! drop into the stream at any time, without context, and find the next message
