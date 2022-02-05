@@ -173,6 +173,7 @@ pub fn encode(bytes: &[u8], output: &mut Vec<u8>) {
 
 /// Encoding a len (between `0` and `MAX_RUN` inclusive) into a byte such that
 /// we avoid `ZERO`.
+#[inline(always)]
 fn encode_len(len: usize) -> u8 {
     // This assert is intended to catch mistakes while hacking on the internals
     // of corncobs.
@@ -189,7 +190,8 @@ fn encode_len(len: usize) -> u8 {
 
 /// Decodes `bytes` into a vector.
 ///
-/// This is a convenience for cases where you have `std` available.
+/// This is a convenience for cases where you have `std` available. Its behavior
+/// is otherwise identical to `decode_buf`.
 #[cfg(feature = "std")]
 pub fn decode(bytes: &[u8], output: &mut Vec<u8>) -> Result<(), CobsError> {
     let offset = output.len();
@@ -201,6 +203,33 @@ pub fn decode(bytes: &[u8], output: &mut Vec<u8>) -> Result<(), CobsError> {
 
 /// Decodes input from `bytes` into `output` starting at index 0. Returns the
 /// number of bytes used in `output`.
+///
+/// # No validation
+///
+/// For performance, this function does _not_ validate that the input doesn't
+/// contain zero. This was a conscious choice made for the following reasons.
+///
+/// First: By not inspecting every byte, we can use `copy_from_slice` to move
+/// chunks of decoded data; this winds up calling into the compiler's `memcpy`
+/// (non-overlapping) intrinsic and will use the largest chunk size available on
+/// the platform -- on Intel this means SSE/AVX, for instance. This also
+/// eliminates a set of tests and conditional branches from this hot loop.
+///
+/// Second: COBS in general does not guarantee integrity, so you're going to
+/// wind up running an integrity check (e.g. CRC validation) over the decode
+/// result _anyway._ Given that obligatory second pass over the data, adding a
+/// third pass to look for zeroes would be wasted effort.
+///
+/// Third: despite being fast, the algorithm used here will fail in very
+/// predictable ways if the input isn't valid COBS:
+///
+/// 1. It will find a zero too early and return a very short decoded result.
+///    This will fail your next-level integrity check and be rejected.
+/// 2. It will continue following run-length bytes until it hits the end of
+///    input, and will return `Err(CobsError::Truncated)`.
+///
+/// Even without the zero check, it should not be possible to get decoding to
+/// `panic!` on arbitrary invalid input.
 ///
 /// # Panics
 ///
@@ -276,6 +305,7 @@ impl std::error::Error for CobsError {}
 
 /// Decodes a length-or-terminator byte. If the byte is `ZERO`, returns `None`.
 /// Otherwise returns the length of the run encoded by the byte.
+#[inline(always)]
 fn decode_len(code: u8) -> Option<usize> {
     usize::from(code).checked_sub(1)
 }
@@ -291,6 +321,12 @@ fn decode_len(code: u8) -> Option<usize> {
 /// `decode_in_place` takes between 1x and 3x the time in benchmarks. You may
 /// also prefer to use `decode_buf` if you can't overwrite the incoming data,
 /// for whatever reason.
+///
+/// # No validation
+///
+/// This does not check for invalid zeroes in the input, for performance
+/// reasons. If you're curious, please see the detailed justification on
+/// [`decode_buf`].
 pub fn decode_in_place(bytes: &mut [u8]) -> Result<usize, CobsError> {
     let mut inpos = 0;
     let mut outpos = 0;
