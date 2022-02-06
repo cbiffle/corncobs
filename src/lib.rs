@@ -266,7 +266,7 @@ fn encode_len(len: usize) -> u8 {
 /// time -- about 35-40x slower in benchmarks. However, if your throughput is
 /// restricted by the speed of a link that gets fed one byte a time, such as a
 /// serial peripheral, this can encode messages with no additional memory.
-pub fn encode_iter<'a>(bytes: &'a [u8]) -> impl Iterator<Item = u8> + 'a {
+pub fn encode_iter(bytes: &[u8]) -> impl Iterator<Item = u8> + '_ {
     let mut state = Some(EncodeState::Begin(bytes));
     core::iter::from_fn(move || {
         let s = state?;
