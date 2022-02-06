@@ -19,3 +19,6 @@ harness = false
 
 [profile.release]
 debug = 2
+
+[workspace]
+members = ["fuzzing"]

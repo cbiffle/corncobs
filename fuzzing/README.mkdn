@@ -1,0 +1,9 @@
+# Fuzz testing
+
+To run the fuzz tests:
+
+```
+$ cargo install honggfuzz
+$ cargo hfuzz run decode
+$ cargo hfuzz run encode
+```
