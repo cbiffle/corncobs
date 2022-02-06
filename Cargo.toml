@@ -1,8 +1,13 @@
 [package]
 name = "corncobs"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Cliff L. Biffle <code@cliffle.com>"]
 edition = "2021"
+description = "COBS encode/decode for Rust no_std targets"
+license = "MPL-2.0"
+repository = "https://github.com/cbiffle/corncobs/"
+keywords = ["cobs", "embedded", "no_std"]
+readme = "README.mkdn"
 
 [dependencies]
 
