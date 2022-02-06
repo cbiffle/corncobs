@@ -188,6 +188,131 @@ fn encode_len(len: usize) -> u8 {
     len.wrapping_add(1) as u8
 }
 
+/// Encodes `bytes` into COBS form, yielding individual encoded bytes through an
+/// iterator.
+///
+/// This is quite a bit slower than memory-to-memory encoding (e.g.
+/// `encode_buf`) because it can't move whole blocks of non-zero bytes at a
+/// time -- about 35-40x slower in benchmarks. However, if your throughput is
+/// restricted by the speed of a link that gets fed one byte a time, such as a
+/// serial peripheral, this can encode messages with no additional memory.
+pub fn encode_iter<'a>(bytes: &'a [u8]) -> impl Iterator<Item = u8> + 'a {
+    let mut state = Some(EncodeState::Begin(bytes));
+    core::iter::from_fn(move || {
+        let s = state?;
+        let (b, s2) = s.next();
+        state = s2;
+        Some(b)
+    })
+}
+
+/// State for incremental encoding.
+#[derive(Copy, Clone, Debug)]
+enum EncodeState<'a> {
+    /// We are at a run boundary and need to determine the size of the next run
+    /// and emit an overhead byte.
+    ///
+    /// From this state we will always emit at least two bytes: an overhead byte
+    /// and a terminator.
+    ///
+    /// If the next run contains only 0, we'll drop it and transition back to
+    /// `Begin`.
+    ///
+    /// Otherwise, we'll transition to `Run` to send the bytes.
+    ///
+    /// If the data is empty we'll transition to `End`.
+    Begin(&'a [u8]),
+    /// We are in a non-empty run. We need to emit a literal byte, and then determine
+    /// our next state based on whether the first slice is empty.
+    ///
+    /// If the first slice is empty, and the second slice is `None`, we'll
+    /// transition to `End`.
+    ///
+    /// If the first slice is empty, and the second slice is `Some`, we'll
+    /// transition to `Begin`.
+    ///
+    /// Otherwise we'll remain in `Run`, moving the first byte out of the first
+    /// slice.
+    Run(u8, &'a [u8], Option<&'a [u8]>),
+    /// We have used all the data bytes and just need to emit a terminating
+    /// zero.
+    ///
+    /// This state will always emit exactly one byte.
+    End,
+}
+
+impl<'a> EncodeState<'a> {
+    pub fn next(self) -> (u8, Option<Self>) {
+        match self {
+            Self::Begin(bytes) => {
+                let (run, rest) = take_run(bytes);
+                let b = encode_len(run.len());
+                (b, Some(Self::next_run_state(run, rest)))
+            }
+            Self::Run(b, run, rest) => {
+                (b, Some(Self::next_run_state(run, rest)))
+            }
+            Self::End => (0, None),
+        }
+    }
+
+    fn next_run_state(run: &'a [u8], rest: Option<&'a [u8]>) -> Self {
+        if let Some((&b, run)) = run.split_first() {
+            // There's data in the run, we must drain it before starting
+            // a new one.
+            Self::Run(b, run, rest)
+        } else {
+            Self::new_run_state(rest)
+        }
+    }
+
+    fn new_run_state(rest: Option<&'a [u8]>) -> Self {
+        if let Some(rest) = rest {
+            Self::Begin(rest)
+        } else {
+            Self::End
+        }
+    }
+}
+
+/// Takes a run off the front of `bytes`. The run will be between 0 and
+/// `MAX_RUN` bytes, inclusive, and will not include any `ZERO` bytes.
+///
+/// If the run is empty, it means the next byte in `bytes` was `ZERO`.
+///
+/// Returns `(run, rest)`, where `rest` is...
+///
+/// - `None`, if this run consumed the entire slice.
+/// - `Some(stuff)`, if after this run there is still data to process.
+///
+/// Note that `stuff` may be empty, if `bytes` ends in a `ZERO`. It is still
+/// important to process `stuff` in that case.
+fn take_run(bytes: &[u8]) -> (&[u8], Option<&[u8]>) {
+    // The run will be no longer than
+    // - All the bytes, or
+    // - The fixed MAX_RUN constant.
+    let max_len = usize::min(bytes.len(), MAX_RUN);
+    // It may be shorter than that if there's a zero. Scan the prefix for a zero
+    // and truncate if found.
+    let run_len = bytes.iter()
+        .take(max_len)
+        .position(|&b| b == ZERO)
+        .unwrap_or(max_len);
+
+    let (run, rest) = bytes.split_at(run_len);
+    let rest = if rest.is_empty() {
+        None
+    } else if run_len == MAX_RUN {
+        // Run does not imply a zero, don't omit one from the output if present.
+        Some(rest)
+    } else {
+        debug_assert_eq!(rest[0], 0);
+        // Drop the zero.
+        Some(&rest[1..])
+    };
+    (run, rest)
+}
+
 /// Decodes `bytes` into a vector.
 ///
 /// This is a convenience for cases where you have `std` available. Its behavior
@@ -354,131 +479,6 @@ pub fn decode_in_place(bytes: &mut [u8]) -> Result<usize, CobsError> {
         outpos - 1
     } else {
         outpos
-    })
-}
-
-/// State for incremental encoding.
-#[derive(Copy, Clone, Debug)]
-enum State<'a> {
-    /// We are at a run boundary and need to determine the size of the next run
-    /// and emit an overhead byte.
-    ///
-    /// From this state we will always emit at least two bytes: an overhead byte
-    /// and a terminator.
-    ///
-    /// If the next run contains only 0, we'll drop it and transition back to
-    /// `Begin`.
-    ///
-    /// Otherwise, we'll transition to `Run` to send the bytes.
-    ///
-    /// If the data is empty we'll transition to `End`.
-    Begin(&'a [u8]),
-    /// We are in a non-empty run. We need to emit a literal byte, and then determine
-    /// our next state based on whether the first slice is empty.
-    ///
-    /// If the first slice is empty, and the second slice is `None`, we'll
-    /// transition to `End`.
-    ///
-    /// If the first slice is empty, and the second slice is `Some`, we'll
-    /// transition to `Begin`.
-    ///
-    /// Otherwise we'll remain in `Run`, moving the first byte out of the first
-    /// slice.
-    Run(u8, &'a [u8], Option<&'a [u8]>),
-    /// We have used all the data bytes and just need to emit a terminating
-    /// zero.
-    ///
-    /// This state will always emit exactly one byte.
-    End,
-}
-
-impl<'a> State<'a> {
-    pub fn next(self) -> (u8, Option<Self>) {
-        match self {
-            State::Begin(bytes) => {
-                let (run, rest) = take_run(bytes);
-                let b = encode_len(run.len());
-                (b, Some(Self::next_run_state(run, rest)))
-            }
-            State::Run(b, run, rest) => {
-                (b, Some(Self::next_run_state(run, rest)))
-            }
-            State::End => (0, None),
-        }
-    }
-
-    fn next_run_state(run: &'a [u8], rest: Option<&'a [u8]>) -> Self {
-        if let Some((&b, run)) = run.split_first() {
-            // There's data in the run, we must drain it before starting
-            // a new one.
-            State::Run(b, run, rest)
-        } else {
-            State::new_run_state(rest)
-        }
-    }
-
-    fn new_run_state(rest: Option<&'a [u8]>) -> Self {
-        if let Some(rest) = rest {
-            State::Begin(rest)
-        } else {
-            State::End
-        }
-    }
-}
-
-/// Takes a run off the front of `bytes`. The run will be between 0 and
-/// `MAX_RUN` bytes, inclusive, and will not include any `ZERO` bytes.
-///
-/// If the run is empty, it means the next byte in `bytes` was `ZERO`.
-///
-/// Returns `(run, rest)`, where `rest` is...
-///
-/// - `None`, if this run consumed the entire slice.
-/// - `Some(stuff)`, if after this run there is still data to process.
-///
-/// Note that `stuff` may be empty, if `bytes` ends in a `ZERO`. It is still
-/// important to process `stuff` in that case.
-fn take_run(bytes: &[u8]) -> (&[u8], Option<&[u8]>) {
-    // The run will be no longer than
-    // - All the bytes, or
-    // - The fixed MAX_RUN constant.
-    let max_len = usize::min(bytes.len(), MAX_RUN);
-    // It may be shorter than that if there's a zero. Scan the prefix for a zero
-    // and truncate if found.
-    let run_len = bytes.iter()
-        .take(max_len)
-        .position(|&b| b == ZERO)
-        .unwrap_or(max_len);
-
-    let (run, rest) = bytes.split_at(run_len);
-    let rest = if rest.is_empty() {
-        None
-    } else if run_len == MAX_RUN {
-        // Run does not imply a zero, don't omit one from the output if present.
-        Some(rest)
-    } else {
-        debug_assert_eq!(rest[0], 0);
-        // Drop the zero.
-        Some(&rest[1..])
-    };
-    (run, rest)
-}
-
-/// Encodes `bytes` into COBS form, yielding individual encoded bytes through an
-/// iterator.
-///
-/// This is quite a bit slower than memory-to-memory encoding (e.g.
-/// `encode_buf`) because it can't move whole blocks of non-zero bytes at a
-/// time -- about 35-40x slower in benchmarks. However, if your throughput is
-/// restricted by the speed of a link that gets fed one byte a time, such as a
-/// serial peripheral, this can encode messages with no additional memory.
-pub fn encode_iter<'a>(bytes: &'a [u8]) -> impl Iterator<Item = u8> + 'a {
-    let mut state = Some(State::Begin(bytes));
-    core::iter::from_fn(move || {
-        let s = state?;
-        let (b, s2) = s.next();
-        state = s2;
-        Some(b)
     })
 }
 
