@@ -11,6 +11,9 @@ targets:
   input size, so you can define fixed-size buffers precisely without magic
   numbers.
 
+- Has pretty good test coverage, [Criterion] benchmarks, and a [honggfuzz] fuzz
+  testing suite to try to ensure code quality.
+
 ## COBS in general
 
 COBS lets us take an arbitrary blob of bytes and turn it into a slightly
@@ -35,6 +38,10 @@ boundary after losing at most one message to truncation. While this
 description has been focused on communication channels like serial lines,
 this resynchronization property means COBS can _also_ be valuable for data
 stored on disk, where it might be truncated, or in a circular buffer.
+
+Please note that COBS **does nothing to ensure message integrity**. It will
+happily decode garbage into garbage. Any scheme using COBS will also want an
+integrity check (e.g. a CRC) either before or after COBS encode/decode.
 
 ## `corncobs` specifically
 
@@ -72,4 +79,23 @@ Features:
   enables routines for encoding to-from `Vec`, and an `Error` impl for
   `CobsError`.
 
+## Tips for using COBS
+
+If you're designing a protocol or message format and considering using COBS, you
+have some options.
+
+**Optimizing for size:** COBS encoding has the least overhead when the data
+being encoded contains `0x00` bytes, at least one for every 254 bytes sent. In
+practice, most data formats achieve this. However...
+
+**Optimizing for speed:** COBS encode/decode, and particularly the `corncobs`
+implementation, goes fastest when data contains as _few_ `0x00` bytes as
+possible -- ideally none. If you can adjust the data you're encoding to avoid
+zero, you can achieve higher encode/decode rates. For instance, in one of my
+projects that sends RGB video data, I just declared that red/green/blue value 1
+is the same as 0, and made all the 0s into 1s, for a large performance
+improvement.
+
 [cobs]: https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing
+[Criterion]: https://docs.rs/criterion/latest/criterion/
+[honggfuzz]: https://docs.rs/honggfuzz/latest/honggfuzz/
