@@ -14,7 +14,20 @@ targets:
 - Has pretty good test coverage, [Criterion] benchmarks, and a [honggfuzz] fuzz
   testing suite to try to ensure code quality.
 
-## When to use this crate
+## Cargo `features`
+
+No features are enabled by default. Embedded programmers do not need to specify
+`default-features = false` when using `corncobs` because who said `std` should
+be the default anyhow? People with lots of RAM, that's who.
+
+Features:
+
+- `std`: if you're on one of them "big computers" with "infinite memory" and can
+  afford the inherent nondeterminism of dynamic memory allocation, this feature
+  enables routines for encoding to-from `Vec`, and an `Error` impl for
+  `CobsError`.
+
+## When to use COBS
 
 COBS lets us take an arbitrary blob of bytes and turn it into a slightly
 longer blob that doesn't contain a certain byte, except as a terminator at
@@ -40,33 +53,47 @@ plus one byte per 254 input bytes. `corncobs` provides the `max_encoded_len`
 function for sizing buffers to allow for worst-case encoding overhead, at
 compile time.
 
-`corncobs` can be used in several different ways, each with different costs
-and benefits.
+## When to use this implementation of COBS
 
-- Encoding
-  - `encode_buf`: from one slice to another; efficient, but requires 2x the
-     available RAM.
-  - `encode_iter`: incremental, using an iterator; somewhat slower, but
-    requires no additional memory. (This can be useful in a serial interrupt
-    handler.)
-- Decoding
-  - `decode_buf`: from one slice to another; efficient, but requires 2x the
-    available RAM.
-  - `decode_in_place`: in-place in a slice; nearly as efficient, but
-    overwrites incoming data.
+I wrote `corncobs` for an art project that required streaming video over a 3-10
+Mbit/s RS485 link on an 80MHz Cortex-M4. Its performance is more than sufficient
+for this task.
 
-## Cargo `features`
+At the time, I had identified two main alternatives: [`cobs-rs`] and
+[`postcard-cobs`]. (Note: `postcard-cobs` says it's a fork of `cobs-rs`, but it
+isn't, it's a fork of [`cobs`][cobs-crate]. This confused me too.) They didn't
+quite work for my application:
 
-No features are enabled by default. Embedded programmers do not need to specify
-`default-features = false` when using `corncobs` because who said `std` should
-be the default anyhow? People with lots of RAM, that's who.
+- At about 8 CPU cycles per incoming bit, I needed decoding to be very, very
+  fast. `corncobs` decoding is about 60x faster and met my needs. (Encode is
+  about 3x faster. Both numbers are for non-pathological data, i.e. not all
+  zeroes. See the benchmark suite for details.)
 
-Features:
+- I was receiving messages in a circular buffer via DMA, where they'd be
+  concatenated but separated with zeroes. This meant I couldn't express the
+  length of incoming messages at compile time, and I needed an exact number of
+  bytes consumed for each message, both of which made using `cobs-rs` difficult.
 
-- `std`: if you're on one of them "big computers" with "infinite memory" and can
-  afford the inherent nondeterminism of dynamic memory allocation, this feature
-  enables routines for encoding to-from `Vec`, and an `Error` impl for
-  `CobsError`.
+- I was operating in an environment where data transmission was not perfectly
+  reliable, and needed the firmware to recover gracefully from corruption or
+  lost data, i.e. not panic. This made using `postcard-cobs` difficult. (They
+  don't have a public bug tracker, so I was unable to report the panics.)
+
+However, `corncobs` and `postcard-cobs` are compatible; the `tests/compat.rs`
+test suite in `corncobs` proves this. (Note that you need to make sure to strip
+trailing zeroes before handing data to `postcard-cobs` to avoid panics.)
+`corncobs` is also mostly compatible with `cobs-rs` with the exception of the
+encoding of empty messages, an area where I think `cobs-rs` has a bug. So, you
+can mix and match -- if you would like the slower-but-more-predictable encoding
+performance of `postcard-cobs` and the faster decode of `corncobs`, go for it.
+
+The performance tests I used to reach these conclusions are checked in. I keep
+an eye on them, in case I can stop maintaining my own crate some day. :-) You
+can run them with:
+
+```
+$ cargo bench comparison
+```
 
 ## Tips for using COBS
 
@@ -89,3 +116,6 @@ improvement.
 [Criterion]: https://docs.rs/criterion/latest/criterion/
 [honggfuzz]: https://docs.rs/honggfuzz/latest/honggfuzz/
 [SLIP]: https://en.wikipedia.org/wiki/Serial_Line_Internet_Protocol
+[`cobs-rs`]: https://crates.io/crates/cobs-rs
+[`postcard-cobs`]: https://crates.io/crates/postcard-cobs
+[cobs-crate]: https://crates.io/crates/cobs

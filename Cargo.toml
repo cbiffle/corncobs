@@ -17,13 +17,20 @@ std = []
 
 [dev-dependencies]
 criterion = "0.3.5"
-
-[[bench]]
-name = "benchy"
-harness = false
+cobs-rs = "1.1"
+postcard-cobs = "0.2"
+cobs = "0.1"
 
 [profile.release]
 debug = 2
 
 [workspace]
 members = ["fuzzing"]
+
+[[bench]]
+name = "benchy"
+harness = false
+
+[[bench]]
+name = "comparison"
+harness = false
