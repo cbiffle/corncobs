@@ -112,6 +112,22 @@ projects that sends RGB video data, I just declared that red/green/blue value 1
 is the same as 0, and made all the 0s into 1s, for a large performance
 improvement.
 
+## Running the tests and stuff
+
+For my future self, when I have forgotten the incantations. Or for you!
+
+Tests: `cargo test`
+
+Benchmarks: `cargo bench` (easy enough so far)
+
+Fuzzing:
+
+```
+cargo install honggfuzz
+cargo hfuzz run encode  # or...
+cargo hfuzz run decode
+```
+
 [cobs]: https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing
 [Criterion]: https://docs.rs/criterion/latest/criterion/
 [honggfuzz]: https://docs.rs/honggfuzz/latest/honggfuzz/
