@@ -14,42 +14,31 @@ targets:
 - Has pretty good test coverage, [Criterion] benchmarks, and a [honggfuzz] fuzz
   testing suite to try to ensure code quality.
 
-## COBS in general
+## When to use this crate
 
 COBS lets us take an arbitrary blob of bytes and turn it into a slightly
 longer blob that doesn't contain a certain byte, except as a terminator at
-the very end. This makes it useful for framing packets on serial lines, or
-other contexts where you'd like to be able to detect frame or record
-boundaries.
+the very end. `corncobs` implements the version of this where the byte is zero.
+That is, `corncobs` can take a sequence of arbitrary bytes, and turn it into a
+slightly longer sequence that doesn't contain zero except at the end.
 
-The "slightly longer" part is important. COBS guarantees an upper bound to
-the size of the encoded output: the original length, plus two bytes, plus
-one byte per 254 input bytes. Other alternatives like SLIP framing can have
-worst-case overhead up to 100%, which means to meet your application's
-requirements, you may need to reserve up to 50% of bandwidth at all times.
+The main reason you'd want to do this is _framing._ If you're transmitting a
+series of messages over a stream, you need some way to tell where the messages
+begin and end. There are many ways to do this -- such as by transmitting a
+length before every message -- but most of them don't support _sync recovery._
+Sync recovery lets a receiver tune in anywhere in a stream and figure out
+(correctly) where the next message boundary is. The easiest way to provide sync
+recovery is to use a marker at the beginning/end of each message that you can
+reliably tell apart from the data in the messages. To find message boundaries in
+an arbitrary data stream, you only need to hunt for the end of the current
+message and start parsing from there. COBS can do this by ensuring that the
+message terminator character (0) only appears between messages.
 
-Delightfully, the overhead of COBS _decreases_ if the data you're sending
-contains the termination byte. This is the opposite of SLIP, and can cause the
-average-case overhead to be very nearly zero.
-
-COBS is an example of a _resynchronizable_ framing protocol. An observer can
-drop into the stream at any time, without context, and find the next message
-boundary after losing at most one message to truncation. While this
-description has been focused on communication channels like serial lines,
-this resynchronization property means COBS can _also_ be valuable for data
-stored on disk, where it might be truncated, or in a circular buffer.
-
-Please note that COBS **does nothing to ensure message integrity**. It will
-happily decode garbage into garbage. Any scheme using COBS will also want an
-integrity check (e.g. a CRC) either before or after COBS encode/decode.
-
-## `corncobs` specifically
-
-`corncobs` implements COBS for the common case where the termination byte is
-zero. (COBS can technically be implemented for _any_ termination byte value,
-though it's rare to use a value other than zero.) Messages on a stream are
-each terminated by a single zero byte, and COBS lets us avoid having other
-distracting zero bytes in the middle of a message.
+Unlike a lot of framing methods (particularly [SLIP]), COBS guarantees an upper
+bound to the size of the encoded output: the original length, plus two bytes,
+plus one byte per 254 input bytes. `corncobs` provides the `max_encoded_len`
+function for sizing buffers to allow for worst-case encoding overhead, at
+compile time.
 
 `corncobs` can be used in several different ways, each with different costs
 and benefits.
@@ -99,3 +88,4 @@ improvement.
 [cobs]: https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing
 [Criterion]: https://docs.rs/criterion/latest/criterion/
 [honggfuzz]: https://docs.rs/honggfuzz/latest/honggfuzz/
+[SLIP]: https://en.wikipedia.org/wiki/Serial_Line_Internet_Protocol

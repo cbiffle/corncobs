@@ -1,57 +1,127 @@
-//! Support for framing data into a resynchronizable stream using Consistent
-//! Overhead Byte Stuffing (COBS). This implementation is deliberately fairly
-//! simple and corny.
-//!
-//! # COBS in general
-//!
+//! # `corncobs`: Corny COBS encoding/decoding in Rust
+//! 
+//! This crate provides [Consistent Overhead Byte Stuffing][cobs] (COBS) support
+//! for Rust programs, with a particular focus on resource-limited embedded
+//! `no_std` targets:
+//! 
+//! - Provides both fast (buffer-to-buffer) and small (in-place or
+//! iterator-based) versions of both encode and decode routines.
+//! 
+//! - Provides a `const fn` for computing the maximum encoded size for a given
+//! input size, so you can define fixed-size buffers precisely without magic
+//! numbers.
+//! 
+//! - Has pretty good test coverage, [Criterion] benchmarks, and a [honggfuzz]
+//! fuzz testing suite to try to ensure code quality.
+//! 
+//! ## When to use this crate
+//! 
 //! COBS lets us take an arbitrary blob of bytes and turn it into a slightly
 //! longer blob that doesn't contain a certain byte, except as a terminator at
-//! the very end. This makes it useful for framing packets on serial lines, or
-//! other contexts where you'd like to be able to detect frame or record
-//! boundaries.
-//!
-//! The "slightly longer" part is important. COBS guarantees an upper bound to
-//! the size of the encoded output: the original length, plus two bytes, plus
-//! one byte per 254 input bytes. Other alternatives like SLIP framing can have
-//! worst-case overhead up to 100%, which means to meet your application's
-//! requirements, you may need to reserve up to 50% of bandwidth at all times.
-//!
-//! Delightfully, the overhead of COBS _decreases_ if the data you're sending
-//! contains the termination byte. This is the opposite of SLIP, and can cause
-//! the average-case overhead to be very nearly zero.
-//!
-//! COBS is an example of a _resynchronizable_ framing protocol. An observer can
-//! drop into the stream at any time, without context, and find the next message
-//! boundary after losing at most one message to truncation. While this
-//! description has been focused on communication channels like serial lines,
-//! this resynchronization property means COBS can _also_ be valuable for data
-//! stored on disk, where it might be truncated, or in a circular buffer.
-//!
-//! # `corncobs` specifically
-//!
-//! `corncobs` implements COBS for the common case where the termination byte is
-//! zero. (COBS can technically be implemented for _any_ termination byte value,
-//! though it's rare to use a value other than zero.) Messages on a stream are
-//! each terminated by a single zero byte, and COBS lets us avoid having other
-//! distracting zero bytes in the middle of a message.
-//!
-//! `corncobs` is specifically designed for (and tested on!) `no_std` embedded
-//! platforms without heaps.
-//!
+//! the very end. `corncobs` implements the version of this where the byte is
+//! zero.  That is, `corncobs` can take a sequence of arbitrary bytes, and turn
+//! it into a slightly longer sequence that doesn't contain zero except at the
+//! end.
+//! 
+//! The main reason you'd want to do this is _framing._ If you're transmitting a
+//! series of messages over a stream, you need some way to tell where the
+//! messages begin and end. There are many ways to do this -- such as by
+//! transmitting a length before every message -- but most of them don't support
+//! _sync recovery._ Sync recovery lets a receiver tune in anywhere in a stream
+//! and figure out (correctly) where the next message boundary is. The easiest
+//! way to provide sync recovery is to use a marker at the beginning/end of each
+//! message that you can reliably tell apart from the data in the messages. To
+//! find message boundaries in an arbitrary data stream, you only need to hunt
+//! for the end of the current message and start parsing from there. COBS can do
+//! this by ensuring that the message terminator character (0) only appears
+//! between messages.
+//! 
+//! Unlike a lot of framing methods (particularly [SLIP]), COBS guarantees an
+//! upper bound to the size of the encoded output: the original length, plus two
+//! bytes, plus one byte per 254 input bytes. `corncobs` provides the
+//! [`max_encoded_len`] function for sizing buffers to allow for worst-case
+//! encoding overhead, at compile time.
+//! 
 //! `corncobs` can be used in several different ways, each with different costs
 //! and benefits.
-//!
+//! 
 //! - Encoding
-//!   - `encode_buf`: from one slice to another; efficient, but requires 2x the
-//!      available RAM.
-//!   - `encode_iter`: incremental, using an iterator; somewhat slower, but
-//!     requires no additional memory. (This can be useful in a serial interrupt
-//!     handler.)
+//!   - [`encode_buf`]: from one slice to another; efficient, but requires 2x
+//!   the available RAM.
+//!   - [`encode_iter`]: incremental, using an iterator; somewhat slower, but
+//!   requires no additional memory. (This can be useful in a serial interrupt
+//!   handler.)
 //! - Decoding
-//!   - `decode_buf`: from one slice to another; efficient, but requires 2x the
-//!     available RAM.
-//!   - `decode_in_place`: in-place in a slice; nearly as efficient, but
-//!     overwrites incoming data.
+//!   - [`decode_buf`]: from one slice to another; efficient, but requires 2x
+//!   the available RAM.
+//!   - [`decode_in_place`]: in-place in a slice; nearly as efficient, but
+//!   overwrites incoming data.
+//!
+//! ## Design decisions / tradeoffs
+//!
+//! `corncobs` is optimized for a fast and simple implementation. To get best
+//! performance on normal data, it leaves something out: **validation**.
+//!
+//! Specifically: `corncobs` will decode invalid COBS data that contains zeroes
+//! in unexpected places mid-message. It could reject such data by scanning for
+//! zeroes. We chose not to do this for performance reasons, and justify it with
+//! the following points.
+//!
+//! First: we don't have to do this to maintain memory safety. Several C
+//! implementations of COBS do data validation in an attempt to avoid buffer
+//! overruns or out-of-bounds accesses. We're not writing in C and don't have
+//! this problem to worry about.
+//!
+//! Second: it really does improve performance, by about 5x in benchmarks. This
+//! is because, by lifting the requirement to inspect every byte hunting for
+//! zeroes, we can use `copy_from_slice` to move data around, which calls
+//! optimized memory-move routines for the target architecture that are
+//! _basically always_ much faster than moving bytes.
+//!
+//! Third: COBS does not guarantee integrity. Spurious zeroes in the middle of a
+//! message is only one way your input data could be corrupted. Your application
+//! needs to handle _all_ possible corruption, which means having an integrity
+//! check on the COBS-decoded data, such as a CRC.
+//!
+//! If you feed `corncobs` random invalid data, it will either return
+//! unexpectedly short decoded results (which will fail your next-level
+//! integrity check), or it will return an `Err`. It will not crash, corrupt
+//! memory, or `panic!`, and we have tests to demonstrate this.
+//!
+//! ## Cargo `features`
+//! 
+//! No features are enabled by default. Embedded programmers do not need to
+//! specify `default-features = false` when using `corncobs` because who said
+//! `std` should be the default anyhow? People with lots of RAM, that's who.
+//! 
+//! Features:
+//! 
+//! - `std`: if you're on one of them "big computers" with "infinite memory" and
+//! can afford the inherent nondeterminism of dynamic memory allocation, this
+//! feature enables routines for encoding to-from `Vec`, and an `Error` impl for
+//! `CobsError`.
+//! 
+//! ## Tips for using COBS
+//! 
+//! If you're designing a protocol or message format and considering using COBS,
+//! you have some options.
+//! 
+//! **Optimizing for size:** COBS encoding has the least overhead when the data
+//! being encoded contains `0x00` bytes, at least one for every 254 bytes sent.
+//! In practice, most data formats achieve this. However...
+//! 
+//! **Optimizing for speed:** COBS encode/decode, and particularly the
+//! `corncobs` implementation, goes fastest when data contains as _few_ `0x00`
+//! bytes as possible -- ideally none. If you can adjust the data you're
+//! encoding to avoid zero, you can achieve higher encode/decode rates. For
+//! instance, in one of my projects that sends RGB video data, I just declared
+//! that red/green/blue value 1 is the same as 0, and made all the 0s into 1s,
+//! for a large performance improvement.
+//!
+//! [cobs]: https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing
+//! [Criterion]: https://docs.rs/criterion/latest/criterion/
+//! [honggfuzz]: https://docs.rs/honggfuzz/latest/honggfuzz/
+//! [SLIP]: https://en.wikipedia.org/wiki/Serial_Line_Internet_Protocol
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -329,33 +399,6 @@ pub fn decode(bytes: &[u8], output: &mut Vec<u8>) -> Result<(), CobsError> {
 /// Decodes input from `bytes` into `output` starting at index 0. Returns the
 /// number of bytes used in `output`.
 ///
-/// # No validation
-///
-/// For performance, this function does _not_ validate that the input doesn't
-/// contain zero. This was a conscious choice made for the following reasons.
-///
-/// First: By not inspecting every byte, we can use `copy_from_slice` to move
-/// chunks of decoded data; this winds up calling into the compiler's `memcpy`
-/// (non-overlapping) intrinsic and will use the largest chunk size available on
-/// the platform -- on Intel this means SSE/AVX, for instance. This also
-/// eliminates a set of tests and conditional branches from this hot loop.
-///
-/// Second: COBS in general does not guarantee integrity, so you're going to
-/// wind up running an integrity check (e.g. CRC validation) over the decode
-/// result _anyway._ Given that obligatory second pass over the data, adding a
-/// third pass to look for zeroes would be wasted effort.
-///
-/// Third: despite being fast, the algorithm used here will fail in very
-/// predictable ways if the input isn't valid COBS:
-///
-/// 1. It will find a zero too early and return a very short decoded result.
-///    This will fail your next-level integrity check and be rejected.
-/// 2. It will continue following run-length bytes until it hits the end of
-///    input, and will return `Err(CobsError::Truncated)`.
-///
-/// Even without the zero check, it should not be possible to get decoding to
-/// `panic!` on arbitrary invalid input.
-///
 /// # Panics
 ///
 /// If `output` is not long enough to receive the decoded output. To be safe,
@@ -456,12 +499,6 @@ fn decode_len(code: u8) -> Option<usize> {
 /// `decode_in_place` takes between 1x and 3x the time in benchmarks. You may
 /// also prefer to use `decode_buf` if you can't overwrite the incoming data,
 /// for whatever reason.
-///
-/// # No validation
-///
-/// This does not check for invalid zeroes in the input, for performance
-/// reasons. If you're curious, please see the detailed justification on
-/// [`decode_buf`].
 pub fn decode_in_place(bytes: &mut [u8]) -> Result<usize, CobsError> {
     let mut inpos = 0;
     let mut outpos = 0;
