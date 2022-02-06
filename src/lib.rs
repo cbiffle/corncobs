@@ -367,6 +367,7 @@ pub fn decode_buf(mut bytes: &[u8], mut output: &mut [u8]) -> Result<usize, Cobs
     // This while-loop is equivalent to `for b in bytes` except that it lets us
     // _also_ consume bytes inside the body, which we totally do.
     while let Some((&head, rest)) = bytes.split_first() {
+        bytes = rest;
         // Detect message terminator.
         let n = if let Some(n) = decode_len(head) {
             n
@@ -376,30 +377,39 @@ pub fn decode_buf(mut bytes: &[u8], mut output: &mut [u8]) -> Result<usize, Cobs
         };
         // If we're not at the end of the message, and our last run was less
         // than MAX_RUN bytes, we need to insert a zero.
-        if core::mem::replace(&mut trailing_zero, false) {
+        if trailing_zero {
             let (z, new_output) = output.split_at_mut(1);
             z[0] = ZERO;
             output = new_output;
         }
-        // Split `rest` into our run and, well, the rest.
-        if rest.len() < n {
-            return Err(CobsError::Truncated);
-        }
-        let (block, rest) = rest.split_at(n);
 
-        // Blit that block!
-        let (block_out, new_output) = output.split_at_mut(block.len());
-        block_out.copy_from_slice(block);
-        output = new_output;
+        // Skip a bunch of work if our run length is zero. This cuts the
+        // worst-case time in benchmarks (on Intel) by about 50% while only
+        // slightly impacting the less pathological cases.
+        if n != 0 {
+            // Refuse to proceed if the run claims to contain more bytes than
+            // the slice does. (This check prevents a panic in decoding
+            // truncated data.)
+            if bytes.len() < n {
+                break;
+            }
+
+            // Split the remaining data into the block belonging to this run and
+            // allll the rest.
+            let (block, rest) = bytes.split_at(n);
+            bytes = rest;
+
+            // Blit that block!
+            let (block_out, new_output) = output.split_at_mut(block.len());
+            block_out.copy_from_slice(block);
+            output = new_output;
+        }
 
         // Record whether this run was shorter than the max. Runs shorter than
         // the max in the middle of a message are always ended by zero, which we
         // need to insert in the output. However, a shorter-than-max run at the
         // very _end_ is not terminated by zero, and we handle it above.
         trailing_zero = n != MAX_RUN;
-
-        // Discard processed input.
-        bytes = rest;
     }
 
     // If we got here, it's because we ran all the way through `bytes` without
