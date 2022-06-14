@@ -23,8 +23,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         });
 
         let mut out = [0; corncobs::max_encoded_len(FIXED_LEN)];
-        group.bench_with_input(BenchmarkId::new("postcard-cobs", set), data, move |b, i| {
-            b.iter(|| postcard_cobs::encode(i, &mut out));
+        group.bench_with_input(BenchmarkId::new("cobs", set), data, move |b, i| {
+            b.iter(|| cobs::encode(i, &mut out));
         });
 
         const FIXED_OUT_LEN: usize = corncobs::max_encoded_len(1024);
@@ -42,7 +42,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
         const ELEN: usize = corncobs::max_encoded_len(FIXED_LEN);
         let mut encoded = [0; ELEN];
-        let n = corncobs::encode_buf(data, &mut encoded);
+        let _ = corncobs::encode_buf(data, &mut encoded);
 
         let mut out = [0; FIXED_LEN];
         group.bench_with_input(BenchmarkId::new("corncobs", set), &encoded, move |b, i| {
@@ -53,14 +53,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             b.iter(|| cobs_rs::unstuff::<ELEN, FIXED_LEN>(*i, corncobs::ZERO));
         });
 
-        // postcard-cobs loses its _mind_ if you hand it data including a zero,
-        // i.e.
-        //
-        // assertion failed: dec.push(source).or(Err(()))?.is_none()
-        let trimmed = &encoded[..n - 1];
         let mut out = [0; FIXED_LEN];
-        group.bench_with_input(BenchmarkId::new("postcard-cobs", set), trimmed, move |b, i| {
-            b.iter(|| postcard_cobs::decode(i, &mut out));
+        group.bench_with_input(BenchmarkId::new("cobs", set), &encoded, move |b, i| {
+            b.iter(|| cobs::decode(i, &mut out));
         });
 
     }
