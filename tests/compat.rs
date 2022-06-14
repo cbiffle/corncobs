@@ -59,9 +59,13 @@ fn check_cobs_rs() {
 }
 
 #[test]
-fn check_postcard_cobs() {
+fn check_cobs() {
     for (i, (input, _output)) in FIXTURES.iter().enumerate() { 
         let skips = [0];
+
+        // NOTE: `cobs` does not support zero-length messages. Rather than
+        // serializing an empty message, e.g. `[0x01, 0x00]`, it produces
+        // an empty serialized message, e.g. `[]`.
         if skips.contains(&i) {
             eprintln!("skipping known-broken fixture {}", i);
             continue;
@@ -74,15 +78,15 @@ fn check_postcard_cobs() {
         eprintln!("corncobs: {:x?}", ccout);
 
         let mut actual = vec![0; corncobs::max_encoded_len(input.len())];
-        let pclen = postcard_cobs::encode(input, &mut actual);
+        let pclen = cobs::encode(input, &mut actual);
         let pcout = &actual[..pclen];
-        eprintln!("postcard: {:x?}", pcout);
+        eprintln!("cobs: {:x?}", pcout);
 
         for (j, (ours, theirs)) in ccout.iter().zip(pcout).enumerate() {
             assert_eq!(theirs, ours, "mismatch at fixture {} index {}", i, j);
         }
 
-        // Postcard does not zero-terminate.
+        // cobs.rs does not zero-terminate.
         assert_eq!(pcout.len(), ccout.len() - 1, "length mismatch at fixture {}", i);
     }
 }
