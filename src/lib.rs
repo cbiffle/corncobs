@@ -468,12 +468,16 @@ pub enum CobsError {
     /// spuriously if you pick up in the middle of a stream without finding the
     /// first zero.)
     Truncated,
+    /// The input contained an unexpected zero byte. Not all decode methods
+    /// promise to detect this case.
+    Corrupt,
 }
 
 impl core::fmt::Display for CobsError {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
             Self::Truncated => f.write_str("input truncated"),
+            Self::Corrupt => f.write_str("input corrupt"),
         }
     }
 }
@@ -527,6 +531,83 @@ pub fn decode_in_place(bytes: &mut [u8]) -> Result<usize, CobsError> {
     } else {
         outpos
     })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Decoder {
+    state: DState,
+}
+
+impl Decoder {
+    pub fn advance(&mut self, byte: u8) -> Result<DecodeStatus, CobsError> {
+        match self.state {
+            DState::Start | DState::Tween(true) => {
+                if let Some(count) = byte.checked_sub(1) {
+                    if let Some(count2) = count.checked_sub(1) {
+                        self.state = DState::Literal(count2, byte == 0xFF);
+                    } else {
+                        self.state = DState::Tween(false);
+                    }
+                    Ok(DecodeStatus::Pending)
+                } else {
+                    self.state = DState::Done;
+                    Ok(DecodeStatus::Done)
+                }
+            }
+            DState::Tween(false) => {
+                if let Some(count) = byte.checked_sub(1) {
+                    if let Some(count2) = count.checked_sub(1) {
+                        self.state = DState::Literal(count2, byte == 0xFF);
+                    } else {
+                        self.state = DState::Tween(false);
+                    }
+                    Ok(DecodeStatus::Append(ZERO))
+                } else {
+                    self.state = DState::Done;
+                    Ok(DecodeStatus::Done)
+                }
+            }
+            DState::Literal(n, omit_zero) => {
+                if byte == ZERO {
+                    Err(CobsError::Corrupt)
+                } else {
+                    if let Some(next_n) = n.checked_sub(1) {
+                        self.state = DState::Literal(next_n, omit_zero);
+                    } else {
+                        self.state = DState::Tween(omit_zero);
+                    }
+
+                    Ok(DecodeStatus::Append(byte))
+                }
+            }
+            DState::Done => panic!(),
+        }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.state == DState::Done
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum DState {
+    Start,
+    Tween(bool),
+    Literal(u8, bool),
+    Done,
+}
+
+impl Default for DState {
+    fn default() -> Self {
+        Self::Start
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DecodeStatus {
+    Pending,
+    Append(u8),
+    Done,
 }
 
 // Tests for private bits; test fixtures require std, unfortunately, so you have

@@ -142,6 +142,62 @@ fn long_fixtures() {
 }
 
 #[test]
+fn long_fixtures_incremental() {
+    let fixtures: &[(&'static [u8], &'static [u8])] = &[
+        (&LONG_FIXTURE_1.0, &LONG_FIXTURE_1.1),
+        (&LONG_FIXTURE_2.0, &LONG_FIXTURE_2.1),
+        (&LONG_FIXTURE_3.0, &LONG_FIXTURE_3.1),
+    ];
+    for (i, &(input, expected)) in fixtures.iter().enumerate() {
+        println!("-- fixture {} --", i);
+        let mut decoder = corncobs::Decoder::default();
+        let mut input = input.iter();
+        for (bi, &byte) in expected.iter().enumerate() {
+            println!("{:?} <- {:x}", decoder, byte);
+            match decoder.advance(byte) {
+                Ok(corncobs::DecodeStatus::Append(db)) => {
+                    if let Some(&next_in) = input.next() {
+                        assert_eq!(db, next_in, "fixture {} idx {}", i, bi);
+                    } else {
+                        panic!("decode result longer than fixture");
+                    }
+                }
+                Ok(corncobs::DecodeStatus::Pending) => (),
+                Ok(corncobs::DecodeStatus::Done) => {
+                    assert_eq!(input.next(), None);
+                }
+                Err(e) => {
+                    panic!("{:?}", e);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn incremental1() {
+    let mut decoder = corncobs::Decoder::default();
+    let input = [4, 0x80, 0x80, 0x80, 0];
+    let mut count = 0;
+    for byte in input {
+        match decoder.advance(byte) {
+            Ok(corncobs::DecodeStatus::Append(b)) => {
+                count += 1;
+                assert_eq!(b, 0x80);
+            }
+            Ok(corncobs::DecodeStatus::Pending) => (),
+            Ok(corncobs::DecodeStatus::Done) => {
+                assert_eq!(count, 3);
+                return;
+            }
+            Err(e) => panic!("{:?}", e),
+        }
+    }
+
+    panic!("did not hit done");
+}
+
+#[test]
 fn long_fixtures_iter() {
     let fixtures: &[(&'static [u8], &'static [u8])] = &[
         (&LONG_FIXTURE_1.0, &LONG_FIXTURE_1.1),

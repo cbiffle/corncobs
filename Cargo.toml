@@ -1,6 +1,6 @@
 [package]
 name = "corncobs"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Cliff L. Biffle <code@cliffle.com>"]
 edition = "2021"
 description = "COBS encode/decode for Rust no_std targets"
