@@ -13,13 +13,19 @@ static FIXTURES: &[(&[u8], &[u8])] = &[
     (&[], &[0x01, 0x00]),
     (&[0x00], &[0x01, 0x01, 0x00]),
     (&[0x00, 0x00], &[0x01, 0x01, 0x01, 0x00]),
-    (&[0x11, 0x22, 0x00, 0x33], &[0x03, 0x11, 0x22, 0x02, 0x33, 0x00]),
-    (&[0x11, 0x00, 0x00, 0x00], &[0x02, 0x11, 0x01, 0x01, 0x01, 0x00]),
+    (
+        &[0x11, 0x22, 0x00, 0x33],
+        &[0x03, 0x11, 0x22, 0x02, 0x33, 0x00],
+    ),
+    (
+        &[0x11, 0x00, 0x00, 0x00],
+        &[0x02, 0x11, 0x01, 0x01, 0x01, 0x00],
+    ),
 ];
 
 #[test]
 fn check_fixtures() {
-    for (i, (input, output)) in FIXTURES.iter().enumerate() { 
+    for (i, (input, output)) in FIXTURES.iter().enumerate() {
         eprintln!("-- fixture {} --", i);
         eprintln!("input: {:x?}", input);
         eprintln!("expected: {:x?}", output);
@@ -34,7 +40,7 @@ fn check_fixtures() {
 
 #[test]
 fn check_fixtures_iter() {
-    for (i, (input, output)) in FIXTURES.iter().enumerate() { 
+    for (i, (input, output)) in FIXTURES.iter().enumerate() {
         let actual: Vec<u8> = encode_iter(input).collect();
 
         assert_eq!(&actual[..], *output, "mismatch in test fixture case {}", i);
@@ -115,12 +121,42 @@ const LONG_FIXTURE_3: ([u8; 255], [u8; 255 + 3]) = {
     (input, output)
 };
 
+const LONG_FIXTURE_4: ([u8; 256], [u8; 256 + 3]) = {
+    // Input is:
+    // 01 02 .. FE 00 01
+    let mut input = [0; 256];
+    let mut i = 0;
+    while i < 254 {
+        input[i] = i as u8 + 1;
+        i += 1;
+    }
+    input[254] = 0x00;
+    input[255] = 0x01;
+
+    // Output should be:
+    // FF 01 02 ... FD FE 01 02 01 00
+    let mut output = [0xDE; 256 + 3];
+    output[0] = 0xff;
+    let mut i = 1;
+    while i < 255 {
+        output[i] = i as u8;
+        i += 1;
+    }
+    output[255] = 1;
+    output[256] = 2;
+    output[256 + 1] = 1;
+    output[256 + 2] = 0;
+
+    (input, output)
+};
+
 #[test]
 fn long_fixtures() {
     let fixtures: &[(&'static [u8], &'static [u8])] = &[
         (&LONG_FIXTURE_1.0, &LONG_FIXTURE_1.1),
         (&LONG_FIXTURE_2.0, &LONG_FIXTURE_2.1),
         (&LONG_FIXTURE_3.0, &LONG_FIXTURE_3.1),
+        (&LONG_FIXTURE_4.0, &LONG_FIXTURE_4.1),
     ];
     for (i, &(input, expected)) in fixtures.iter().enumerate() {
         let mut actual = vec![0; max_encoded_len(input.len())];
@@ -128,16 +164,18 @@ fn long_fixtures() {
         let n = encode_buf(input, &mut actual[..]);
         actual.truncate(n);
         for (j, (&ab, &eb)) in actual.iter().zip(expected).enumerate() {
-            assert_eq!(ab, eb,
-                "mismatch at fixture {} index {}", i, j);
+            assert_eq!(ab, eb, "mismatch at fixture {} index {}", i, j);
         }
-        assert_eq!(actual.len(), expected.len(),
-        "length mismatch in fixture {}", i);
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "length mismatch in fixture {}",
+            i
+        );
 
         let mut decoded = vec![0; input.len()];
         decode_buf(&actual, &mut decoded).unwrap();
-        assert_eq!(&decoded, &input,
-            "round-trip failed for fixture {}", i);
+        assert_eq!(&decoded, &input, "round-trip failed for fixture {}", i);
     }
 }
 
@@ -147,6 +185,7 @@ fn long_fixtures_incremental() {
         (&LONG_FIXTURE_1.0, &LONG_FIXTURE_1.1),
         (&LONG_FIXTURE_2.0, &LONG_FIXTURE_2.1),
         (&LONG_FIXTURE_3.0, &LONG_FIXTURE_3.1),
+        (&LONG_FIXTURE_4.0, &LONG_FIXTURE_4.1),
     ];
     for (i, &(input, expected)) in fixtures.iter().enumerate() {
         println!("-- fixture {} --", i);
@@ -203,21 +242,24 @@ fn long_fixtures_iter() {
         (&LONG_FIXTURE_1.0, &LONG_FIXTURE_1.1),
         (&LONG_FIXTURE_2.0, &LONG_FIXTURE_2.1),
         (&LONG_FIXTURE_3.0, &LONG_FIXTURE_3.1),
+        (&LONG_FIXTURE_4.0, &LONG_FIXTURE_4.1),
     ];
     for (i, &(input, expected)) in fixtures.iter().enumerate() {
         let actual: Vec<u8> = encode_iter(input).collect();
 
         for (j, (&ab, &eb)) in actual.iter().zip(expected).enumerate() {
-            assert_eq!(ab, eb,
-                "mismatch at fixture {} index {}", i, j);
+            assert_eq!(ab, eb, "mismatch at fixture {} index {}", i, j);
         }
-        assert_eq!(actual.len(), expected.len(),
-        "length mismatch in fixture {}", i);
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "length mismatch in fixture {}",
+            i
+        );
 
         let mut decoded = vec![0; input.len()];
         decode_buf(&actual, &mut decoded).unwrap();
-        assert_eq!(&decoded, &input,
-            "round-trip failed for fixture {}", i);
+        assert_eq!(&decoded, &input, "round-trip failed for fixture {}", i);
     }
 }
 
@@ -248,7 +290,7 @@ fn long_fixture_2_iter() {
 
 #[test]
 fn fixture_round_trip() {
-    for (i, (input, _)) in FIXTURES.iter().enumerate() { 
+    for (i, (input, _)) in FIXTURES.iter().enumerate() {
         let mut encoded = vec![0; max_encoded_len(input.len())];
         let n = encode_buf(input, &mut encoded);
         encoded.truncate(n);
@@ -261,7 +303,7 @@ fn fixture_round_trip() {
 
 #[test]
 fn fixture_round_trip_in_place() {
-    for (i, (input, _)) in FIXTURES.iter().enumerate() { 
+    for (i, (input, _)) in FIXTURES.iter().enumerate() {
         let mut encoded = vec![0; max_encoded_len(input.len())];
         let n = encode_buf(input, &mut encoded);
         encoded.truncate(n);
