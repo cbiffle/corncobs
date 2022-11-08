@@ -195,12 +195,22 @@ pub fn encode_buf(bytes: &[u8], mut output: &mut [u8]) -> usize {
     // it as we write bytes.
     let orig_size = output.len();
 
+    let mut prev_run_was_maximal = false;
+
     // The encoding process can be described in terms of "runs" of non-zero
     // bytes in the input data. We process each run individually.
     //
     // Currently, the scanning-for-zeros loop here is the hottest part of the
     // encode profile.
     for mut run in bytes.split(|&b| b == ZERO) {
+        // If the last run we encoded was maximal length, we need to encode an
+        // explicit zero between it and our current `run`.
+        if prev_run_was_maximal {
+            let (chunk, new_output) = output.split_at_mut(1);
+            chunk[0] = encode_len(0);
+            output = new_output;
+        }
+
         // We can only encode a run of up to `MAX_RUN` bytes in COBS. This may
         // require us to split `run` into multiple output chunks -- in the
         // extreme case, if the input contains no zeroes, we'll process all of
@@ -214,6 +224,7 @@ pub fn encode_buf(bytes: &[u8], mut output: &mut [u8]) -> usize {
 
             output = new_output;
             run = new_run;
+            prev_run_was_maximal = chunk_len == MAX_RUN;
 
             // We test this condition here, rather than as a `while` loop,
             // because we want to process empty runs once.
