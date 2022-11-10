@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 corncobs = {path = ".."}
 honggfuzz = "0.5"
-postcard-cobs = "0.2"
+cobs = "0.2.1"
